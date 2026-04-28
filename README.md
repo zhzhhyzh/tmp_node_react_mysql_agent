@@ -1,285 +1,349 @@
-# Fullstack MySQL + Node.js + Express + React + Agent Orchestrator Template
+# Fullstack Template: MySQL + Node.js/Express + React + Agent Orchestrator
 
-A ready-to-run template to jumpstart projects built on:
+A ready-to-run starter template. Clone, configure a `.env`, run two `npm` commands, and you have:
 
-- **MySQL 8** (via Docker or local install)
-- **Node.js + Express** REST API
-- **Sequelize** ORM with three-table auth model (`user_profile`, `user_login`, `user_account`) plus a CRUD demo (`items`)
-- **JWT** authentication (register / login / me + protected routes)
-- **Agent Orchestrator** - a provider-agnostic skeleton with a pluggable `BaseProvider`, a `MockProvider` for offline use, and a tool registry
-- **React (Vite) + React Router + Axios** SPA with Login, Register, Dashboard, Items CRUD, and Agent chat pages
+- A MySQL-backed REST API with JWT authentication (three-table model: `user_profile`, `user_login`, `user_account`).
+- A CRUD demo resource (`items`) you can copy to build your own entities.
+- A provider-agnostic **Agent Orchestrator** with a tool registry (includes a `MockProvider` so it runs offline).
+- A Vite + React SPA with protected routes, an auth context, an items CRUD page, and an agent chat page.
+- Structured request and action logging across every layer.
 
 ---
 
-## 1. Architecture
+## 1. Prerequisites
 
-```mermaid
-graph TB
-    Browser[React SPA Vite] --> API[Express API]
-    API --> DB[(MySQL)]
-    API --> Orchestrator[AgentOrchestrator]
-    Orchestrator --> Provider[LLMProvider - Mock by default]
-    Orchestrator --> Tools[Tool Registry]
-    Tools --> ItemService[items.list tool]
-    ItemService --> DB
+| Tool | Version | Notes |
+|---|---|---|
+| Node.js | 18+ | LTS recommended |
+| npm | 9+ | Ships with Node |
+| MySQL | 8.x | Or Docker Desktop, which `docker-compose.yml` uses |
+| Git | any | Optional but useful |
+
+Check your machine:
+
+```powershell
+node --version
+npm --version
+docker --version   # only needed if you use the bundled MySQL
 ```
 
-- Frontend talks only to the Express API over HTTP/JSON.
-- Every protected route requires `Authorization: Bearer <jwt>`.
-- The Agent Orchestrator is called via `POST /api/agent/chat`. It loops: ask provider -> execute tool calls -> ask again -> return final message plus a full trace.
-
 ---
 
-## 2. Repository layout
+## 2. Project layout
 
 ```
 .
-|-- docker-compose.yml        # MySQL 8 for local dev
-|-- .gitignore
-|-- README.md
-|-- backend/
-|   |-- package.json
+|-- docker-compose.yml     # MySQL 8 (optional, for local dev)
+|-- README.md              # this file
+|-- smoke-test.ps1         # end-to-end API smoke test
+|-- backend/               # Express + Sequelize API
 |   |-- .env.example
 |   `-- src/
-|       |-- server.js          # bootstrap: sequelize.authenticate + sync + listen
-|       |-- app.js             # express app, cors, routes, error handler
-|       |-- config/db.js       # Sequelize instance from env
-|       |-- models/            # UserProfile, UserLogin, UserAccount, Item + associations
-|       |-- middleware/        # authMiddleware (JWT), errorHandler
-|       |-- utils/             # jwt.js, password.js (bcryptjs)
-|       |-- services/          # authService, itemService (business logic)
-|       |-- controllers/       # thin HTTP layer
-|       |-- routes/            # /api/auth, /api/users, /api/items, /api/agent
-|       `-- agent/
-|           |-- orchestrator.js
-|           |-- providers/     # BaseProvider, MockProvider
-|           `-- tools/         # itemsTool and registry
-`-- frontend/
-    |-- package.json           # react, react-router-dom, axios, vite
-    |-- vite.config.js
-    |-- index.html
+|       |-- server.js            # bootstrap (authenticate + sync + listen)
+|       |-- app.js               # express wiring (cors, json, logger, routes)
+|       |-- config/db.js         # Sequelize connection
+|       |-- models/              # UserProfile, UserLogin, UserAccount, Item
+|       |-- middleware/          # authMiddleware, errorHandler, requestLogger
+|       |-- utils/               # jwt, password, logger
+|       |-- services/            # business logic (auth, items)
+|       |-- controllers/         # HTTP handlers
+|       |-- routes/              # /api/auth, /api/users, /api/items, /api/agent
+|       `-- agent/               # orchestrator, providers, tools
+`-- frontend/              # Vite + React SPA
     |-- .env.example
     `-- src/
-        |-- main.jsx
-        |-- App.jsx            # routes + auth gates
-        |-- api/               # axios client with JWT interceptor + per-resource clients
-        |-- context/           # AuthContext (token + user + login/register/logout)
-        |-- components/        # Navbar, ProtectedRoute
-        |-- pages/             # Login, Register, Dashboard, Items, Agent
+        |-- main.jsx, App.jsx
+        |-- api/                 # axios client, auth/items/agent helpers
+        |-- context/             # AuthContext
+        |-- components/          # Navbar, ProtectedRoute
+        |-- pages/               # Login, Register, Dashboard, Items, Agent
         `-- styles/index.css
 ```
 
 ---
 
-## 3. Prerequisites
+## 3. Setup: one time
 
-- Node.js >= 18
-- npm (or pnpm/yarn)
-- MySQL 8 running locally, or Docker Desktop for the bundled `docker-compose.yml`
+### 3.1. Clone / copy the template into your workspace
 
----
+```powershell
+# already in c:\tmp_nodejs_llm_react\ for this template
+```
 
-## 4. Quick start
+### 3.2. Copy env files
 
-### 4.1. Start MySQL
+```powershell
+Copy-Item backend\.env.example  backend\.env  -Force
+Copy-Item frontend\.env.example frontend\.env -Force
+```
 
-Using Docker:
+Open `backend\.env` and at minimum set a strong `JWT_SECRET`. Defaults for MySQL match `docker-compose.yml`.
+
+```
+PORT=4000
+NODE_ENV=development
+LOG_LEVEL=info
+CORS_ORIGIN=http://localhost:5173
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=app_user
+DB_PASSWORD=app_password
+DB_NAME=app_db
+
+JWT_SECRET=<long random string>
+JWT_EXPIRES_IN=1d
+
+AGENT_PROVIDER=mock
+```
+
+`frontend\.env`:
+
+```
+VITE_API_BASE_URL=http://localhost:4000/api
+```
+
+### 3.3. Start MySQL
+
+Option A - bundled Docker service (recommended):
 
 ```powershell
 docker compose up -d mysql
 ```
 
-Or use any MySQL 8 instance and adjust `backend/.env`.
+Option B - use any local MySQL 8 and update `backend\.env` accordingly. Create a database named `app_db`:
 
-### 4.2. Backend
+```sql
+CREATE DATABASE app_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'app_user'@'%' IDENTIFIED BY 'app_password';
+GRANT ALL ON app_db.* TO 'app_user'@'%';
+FLUSH PRIVILEGES;
+```
+
+### 3.4. Install dependencies
+
+```powershell
+cd backend;  npm install
+cd ..\frontend; npm install
+cd ..
+```
+
+---
+
+## 4. Run the app
+
+Open two PowerShell windows.
+
+**Window 1 - backend**
 
 ```powershell
 cd backend
-copy .env.example .env
-npm install
-npm run dev
+npm run dev        # hot reload via nodemon (or 'npm start' for plain node)
 ```
 
-The server boots on `http://localhost:4000`. On first start, `sequelize.sync({ alter: true })` creates all tables automatically.
+First start auto-creates the tables via `sequelize.sync({ alter: true })`. You should see:
 
-### 4.3. Frontend
+```
+[INFO] [server] starting {"port":4000,"env":"development"}
+[INFO] [server] db connection established
+[INFO] [server] models synchronized
+[INFO] [server] api listening {"url":"http://localhost:4000"}
+```
+
+**Window 2 - frontend**
 
 ```powershell
 cd frontend
-copy .env.example .env
-npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` and register your first user.
+Vite prints `http://127.0.0.1:5173/`. Open it in a browser.
+
+### Sanity check
+
+```powershell
+Invoke-RestMethod http://localhost:4000/health
+# { status = ok; uptime = ... }
+```
+
+Run the end-to-end smoke test that exercises register, login, me, items CRUD, agent chat, and an auth-required 401:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\smoke-test.ps1
+```
 
 ---
 
-## 5. Environment variables
+## 5. Using the template
 
-### backend/.env
+### 5.1. Register and sign in (SPA)
 
-| Variable | Default | Notes |
-|---|---|---|
-| `PORT` | `4000` | API port |
-| `NODE_ENV` | `development` | Toggles SQL logging and stack traces in errors |
-| `CORS_ORIGIN` | `http://localhost:5173` | Must match the frontend origin |
-| `DB_HOST` / `DB_PORT` | `127.0.0.1` / `3306` | MySQL host/port |
-| `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `app_user` / `app_password` / `app_db` | Matches `docker-compose.yml` |
-| `JWT_SECRET` | - | **Required.** Use a long random string |
-| `JWT_EXPIRES_IN` | `1d` | Any `jsonwebtoken` duration string |
-| `AGENT_PROVIDER` | `mock` | Selects which provider `buildDefaultProvider()` uses |
+1. Open `http://localhost:5173/register`.
+2. Fill in full name, email, username, password (min 6 chars).
+3. You land on the **Dashboard** with `user_profile`, `user_login`, and `user_account` values.
+4. `Logout` clears the token and returns you to `/login`.
 
-### frontend/.env
+### 5.2. Manage items (CRUD demo)
 
-| Variable | Default |
-|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:4000/api` |
+Go to **Items**. Use the form to create, then `Edit`/`Delete` rows. All queries are owner-scoped by `user_profile_id`.
 
----
+### 5.3. Talk to the agent
 
-## 6. API reference
+Go to **Agent**. Ask:
 
-All JSON unless noted. Protected endpoints require `Authorization: Bearer <jwt>`.
+```
+list my items please
+```
+
+The `MockProvider` emits a tool call, the orchestrator runs `items.list`, then the provider produces a final summary. The yellow message in the chat is the tool trace; the white one is the assistant's answer.
+
+### 5.4. Using the API directly
+
+```powershell
+$reg = Invoke-RestMethod -Method Post -Uri http://localhost:4000/api/auth/register `
+  -ContentType application/json `
+  -Body (@{ fullName='Bob'; email='bob@x.io'; username='bob'; password='secret123' } | ConvertTo-Json)
+
+$token = $reg.token
+$H = @{ Authorization = "Bearer $token" }
+
+Invoke-RestMethod -Uri http://localhost:4000/api/auth/me -Headers $H
+Invoke-RestMethod -Method Post -Uri http://localhost:4000/api/items -Headers $H `
+  -ContentType application/json -Body (@{ name='hello' } | ConvertTo-Json)
+```
+
+### 5.5. API reference
 
 | Method | Path | Auth | Body | Purpose |
 |---|---|---|---|---|
-| GET | `/health` | no | - | Liveness probe |
-| POST | `/api/auth/register` | no | `{ fullName, email, username, password }` | Creates profile + login + account in one transaction, returns `{ token, user }` |
-| POST | `/api/auth/login` | no | `{ username, password }` | Returns `{ token, user }` and updates `last_login_at` |
-| GET | `/api/auth/me` | yes | - | Returns the authenticated `user` with nested `login` and `account` |
-| GET | `/api/users` | yes | - | Demo listing of users (guard with role in prod) |
-| GET | `/api/items` | yes | - | Owner-scoped item list |
-| POST | `/api/items` | yes | `{ name, description? }` | Create item |
-| GET | `/api/items/:id` | yes | - | Fetch one item (owner-only) |
-| PUT | `/api/items/:id` | yes | `{ name?, description? }` | Update item |
-| DELETE | `/api/items/:id` | yes | - | Delete item |
-| POST | `/api/agent/chat` | yes | `{ message, history? }` | Run the orchestrator; returns `{ message, trace, messages }` |
+| GET | `/health` | no | - | Liveness |
+| POST | `/api/auth/register` | no | `{ fullName, email, username, password }` | Create profile + login + account |
+| POST | `/api/auth/login` | no | `{ username, password }` | Returns `{ token, user }` |
+| GET | `/api/auth/me` | yes | - | Current user incl. `login`, `account` |
+| GET | `/api/users` | yes | - | Demo listing (gate by `role=admin` in prod) |
+| GET | `/api/items` | yes | - | Owner-scoped list |
+| POST | `/api/items` | yes | `{ name, description? }` | Create |
+| GET | `/api/items/:id` | yes | - | Get one |
+| PUT | `/api/items/:id` | yes | `{ name?, description? }` | Update |
+| DELETE | `/api/items/:id` | yes | - | Delete |
+| POST | `/api/agent/chat` | yes | `{ message, history? }` | Run orchestrator, returns `{ message, trace, messages }` |
 
 ---
 
-## 7. Auth model (three tables)
+## 6. Extending the template
 
-Splitting auth across three tables keeps concerns separated and easy to extend.
+### 6.1. Add a new resource (CRUD)
 
-- **`user_profile`** - identity (full name, email, avatar). One row per human.
-- **`user_login`** - credentials (username, `password_hash`, `last_login_at`, `failed_attempts`). Swap this out if you move to OAuth/SSO without touching profile data.
-- **`user_account`** - authorization state (`status`, `role`, `plan`). Good home for billing/feature-flag fields.
+1. Create a model in `backend/src/models/YourModel.js`, register it in `models/index.js` (and add an association if it belongs to a user).
+2. Copy `services/itemService.js` to `services/yourService.js` and adjust fields.
+3. Copy `controllers/itemController.js` and `routes/itemRoutes.js`.
+4. Mount the new router in `routes/index.js`:
 
-Registration creates all three rows inside a single Sequelize transaction (`backend/src/services/authService.js`). The JWT only embeds `sub` (profile id) and `username`; the middleware attaches `req.user = { profileId, username }` on every protected request.
+```js
+router.use('/things', require('./thingRoutes'));
+```
 
----
+5. On the frontend, create `src/api/things.js` (mirror `items.js`) and a page under `src/pages/`. Add a route in `App.jsx`.
 
-## 8. CRUD demo (`items`)
+Restart the backend; `sequelize.sync({ alter: true })` creates the new table automatically.
 
-The `items` table is owned by `user_profile` via `user_profile_id`. Every query in `itemService.js` scopes by the authenticated profile id, so ownership is enforced at the service layer. Use it as the blueprint for your own resources - copy `itemService.js`, `itemController.js`, `itemRoutes.js`, and register the router in `routes/index.js`.
+### 6.2. Plug a real LLM into the Agent Orchestrator
 
----
-
-## 9. Agent Orchestrator
-
-### Contract
-
-Every provider implements one method:
+Every provider implements:
 
 ```js
 // backend/src/agent/providers/BaseProvider.js
 async chat({ messages, tools }) {
-  // returns: { content: string, toolCalls: [{ name, arguments? }, ...] }
+  // return { content: string, toolCalls: [{ name, arguments? }, ...] }
 }
 ```
 
-The orchestrator (`backend/src/agent/orchestrator.js`) runs this loop:
-
-1. Call `provider.chat({ messages, tools })`.
-2. If `toolCalls` is empty, push the final assistant message and return `{ message, trace, messages }`.
-3. Otherwise, execute each tool from the registry, append `{ role: 'tool', name, content: JSON.stringify(result) }`, and iterate.
-4. Stops after `maxIterations` (default 4) to avoid runaway loops.
-
-### Plugging a real LLM
-
-Create a new file under `backend/src/agent/providers/` that extends `BaseProvider`. Example skeleton for an OpenAI-compatible endpoint:
+1. Create `backend/src/agent/providers/OpenAIProvider.js` (or any vendor) that extends `BaseProvider`, maps `tools` to the vendor's function-calling schema, and converts the response back into `{ content, toolCalls }`.
+2. Register it in `backend/src/agent/orchestrator.js` inside `buildDefaultProvider()`:
 
 ```js
-const { BaseProvider } = require('./BaseProvider');
-
-class OpenAIProvider extends BaseProvider {
-  async chat({ messages, tools }) {
-    // 1. Translate tools into your vendor's tool/function-calling schema
-    // 2. POST to your LLM endpoint with messages + tools
-    // 3. Map the response to { content, toolCalls }
-    return { content: '...', toolCalls: [] };
-  }
-}
-
-module.exports = { OpenAIProvider };
-```
-
-Then wire it in `buildDefaultProvider()` inside `orchestrator.js`:
-
-```js
-case 'openai': return new OpenAIProvider();
+case 'openai':      return new OpenAIProvider();
 case 'huggingface': return new HuggingFaceProvider();
 ```
 
-And set `AGENT_PROVIDER=openai` in `backend/.env`.
+3. Set `AGENT_PROVIDER=openai` (and any vendor keys such as `OPENAI_API_KEY`) in `backend/.env` and restart.
 
-### Adding a new tool
+### 6.3. Add a new agent tool
 
 1. Create `backend/src/agent/tools/myTool.js`:
 
 ```js
 module.exports.myTool = {
   name: 'my.tool',
-  description: 'What this tool does.',
+  description: 'What this tool does',
   parameters: { type: 'object', properties: { /* JSON schema */ } },
   async handler(args, ctx) {
-    // ctx.profileId and ctx.username are provided by the agent controller
+    // ctx.profileId and ctx.username are populated by the agent controller
     return { ok: true };
   },
 };
 ```
 
-2. Register it in `backend/src/agent/tools/index.js` by adding it to the `tools` array.
+2. Add it to the `tools` array in `backend/src/agent/tools/index.js`.
 
-The `MockProvider` can be taught to request your tool for demos, or a real LLM will call it via its tool-calling mechanism.
-
----
-
-## 10. Folder-by-folder tour (backend)
-
-- **`config/db.js`** - Sequelize connection, reads `DB_*` env vars.
-- **`models/*`** - one file per table; `models/index.js` wires associations.
-- **`utils/jwt.js` / `utils/password.js`** - thin wrappers over `jsonwebtoken` and `bcryptjs`.
-- **`middleware/authMiddleware.js`** - verifies `Authorization: Bearer` header.
-- **`middleware/errorHandler.js`** - unified JSON error response.
-- **`services/*`** - business logic; throw `HttpError(status, message)` for controlled failures.
-- **`controllers/*`** - Express handlers. Keep them thin; delegate to services.
-- **`routes/*`** - route tables. `routes/index.js` composes the `/api/*` mount points.
-- **`agent/*`** - orchestrator, providers, tools.
-
-## 11. Folder-by-folder tour (frontend)
-
-- **`api/client.js`** - shared Axios instance; injects JWT and redirects on 401.
-- **`api/{auth,items,agent}.js`** - per-resource API helpers.
-- **`context/AuthContext.jsx`** - token/user state, persists token to `localStorage`.
-- **`components/ProtectedRoute.jsx`** - redirects to `/login` when no token.
-- **`components/Navbar.jsx`** - top nav and logout.
-- **`pages/*`** - one file per route.
-- **`styles/index.css`** - minimal, dependency-free styling.
+Any LLM provider that supports tool-calling can now invoke it.
 
 ---
 
-## 12. Recommended next steps
+## 7. Logging
 
-- Replace `sequelize.sync({ alter: true })` with real migrations (`sequelize-cli` or `umzug`).
-- Add refresh tokens / httpOnly cookie storage for production auth.
+Every action emits structured logs with ISO timestamps, a level, a scope, and JSON metadata:
+
+```
+2026-04-28T11:28:51.046Z [INFO] [agent] run start {"username":"alice","profileId":2,"tools":["items.list"]}
+2026-04-28T11:28:51.050Z [INFO] [agent] tool ok {"name":"items.list","durationMs":3}
+2026-04-28T11:28:51.051Z [INFO] [http] <- response {"id":"99...","method":"POST","url":"/api/agent/chat","status":200,"durationMs":7.06,"user":"alice"}
+```
+
+Scopes in use: `server`, `http`, `sql`, `auth`, `auth:jwt`, `items`, `agent`, `error`.
+
+Control verbosity with `LOG_LEVEL` in `backend/.env`:
+
+| Value | Emits |
+|---|---|
+| `debug` | Everything incl. SQL and per-iteration agent details |
+| `info` (default) | Requests, responses, action outcomes |
+| `warn` | Only warnings and errors |
+| `error` | Errors only |
+
+Every request is tagged with an `X-Request-Id` response header that matches the `id` field in log lines, so you can trace a single request through `http`, service, and SQL logs.
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `ECONNREFUSED 127.0.0.1:3306` | MySQL isn't up. Run `docker compose up -d mysql` or start your local MySQL |
+| `Access denied for user` | `DB_USER` / `DB_PASSWORD` in `backend/.env` don't match your MySQL |
+| `JWT_SECRET is not set` | Set `JWT_SECRET` in `backend/.env` and restart |
+| 401 on every API call from the SPA | Token expired or missing - log out and log back in |
+| CORS error in the browser | `CORS_ORIGIN` in `backend/.env` must match the Vite origin (default `http://localhost:5173`) |
+| Port 4000 or 5173 busy | Change `PORT` in `backend/.env` or `vite.config.js` |
+| Schema drift after model changes | Restart the backend; `sequelize.sync({ alter: true })` reconciles columns |
+
+Stop the bundled MySQL when you're done:
+
+```powershell
+docker compose down           # keep data
+docker compose down -v        # wipe data volume
+```
+
+---
+
+## 9. Next steps for production
+
+- Replace `sequelize.sync` with migrations (`sequelize-cli` or `umzug`).
+- Move tokens to httpOnly cookies and add refresh-token rotation.
 - Add role-based guards (`req.user.role === 'admin'`) on admin endpoints.
 - Add input validation (`zod`, `joi`, or `express-validator`).
-- Add tests (`vitest` for frontend, `jest` or `node --test` for backend).
-- Containerize the backend/frontend and extend `docker-compose.yml` for production.
-- Implement a real `LLMProvider` (OpenAI-compatible, Hugging Face Inference API, local Ollama, etc.).
+- Add automated tests (`vitest` for the SPA, `node --test` or `jest` for the API).
+- Containerize backend and frontend; extend `docker-compose.yml` for deployment.
+- Ship logs to a collector (Loki, ELK, Datadog) instead of stdout.
 
 Happy building.
-#   t m p _ n o d e _ r e a c t _ m y s q l _ a g e n t  
- 
